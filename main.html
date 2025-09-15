@@ -1,0 +1,216 @@
+<script type="module">
+  // --- Variablen ---
+  const STORAGE_KEY = "ambition-tracker-users";
+  const XP_PER_LEVEL = 10;
+
+  let users = {};
+  let currentUser = "User1";
+
+  // --- LocalStorage ---
+  function loadLocalUsers() {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    users = saved ? JSON.parse(saved) : {};
+    if (!users["User1"]) {
+      users["User1"] = { goals: [], totalXP:0, currentLevel:1, streak:0, lastActive:null, rewards:[] };
+    }
+  }
+
+  function saveLocalUsers() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
+  }
+
+  // --- Goal & User Management ---
+  function getUserData(username) {
+    if (!users[username]) {
+      users[username] = { goals: [], totalXP:0, currentLevel:1, streak:0, lastActive:null, rewards:[] };
+      saveLocalUsers();
+    }
+    return users[username];
+  }
+
+  function addGoal(user, name) {
+    const data = getUserData(user);
+    const id = data.goals.length ? data.goals[data.goals.length-1].id + 1 : 1;
+    data.goals.push({ 
+      id, 
+      name, 
+      progress: 0, 
+      target: 10, 
+      decayRate: 0, 
+      color: "#4caf50", 
+      emoji: "", 
+      activityLog: {}
+    });
+    saveLocalUsers();
+    renderGoals();
+  }
+
+  function updateGoal(user, id, updates) {
+    const data = getUserData(user);
+    const goal = data.goals.find(g => g.id === id);
+    if(goal){
+      Object.assign(goal, updates);
+      saveLocalUsers();
+      renderGoals();
+    }
+  }
+
+  function addUser(name) {
+    if (!users[name]) {
+      users[name] = { goals: [], totalXP:0, currentLevel:1, streak:0, lastActive:null, rewards:[] };
+      saveLocalUsers();
+      currentUser = name;
+      renderUserSelect();
+      renderGoals();
+      renderXP();
+      renderHeatmap();
+    }
+  }
+
+  // --- XP & Streak ---
+  function addXP(data, amount) {
+    const today = new Date().toISOString().split("T")[0];
+    if (data.lastActive) {
+      const diff = (new Date(today) - new Date(data.lastActive)) / (1000*60*60*24);
+      if (diff === 1) data.streak++;
+      else if (diff > 1) data.streak = 1;
+    } else data.streak = 1;
+    data.lastActive = today;
+
+    let multiplier = data.streak >= 5 ? 2 : 1;
+    data.totalXP += amount * multiplier;
+
+    const newLevel = Math.floor(data.totalXP / XP_PER_LEVEL) + 1;
+    if (newLevel > data.currentLevel) {
+      data.currentLevel = newLevel;
+      const reward = getRewardForLevel(newLevel);
+      data.rewards.push(reward);
+      alert(`🎉 Level ${newLevel} erreicht! Belohnung: ${reward}`);
+    }
+  }
+
+  // --- Belohnungssystem ---
+  const normalRewards = ["🍪 Cookie", "☕ Coffee", "🎵 Song"];
+  const specialRewards = ["🏆 Trophy", "🎁 Special Gift", "🎯 Achievement"];
+  function getRewardForLevel(level){
+    if(level % 5 === 0) {
+      const idx = Math.floor(Math.random()*specialRewards.length);
+      return specialRewards[idx];
+    } else {
+      const idx = Math.floor(Math.random()*normalRewards.length);
+      return normalRewards[idx];
+    }
+  }
+
+  // --- Progress Goal ---
+  window.progressGoal = function(goalId, amount){
+    const data = getUserData(currentUser);
+    const goal = data.goals.find(g => g.id === goalId);
+    if(goal){
+      goal.progress += amount;
+      const today = new Date().toISOString().split("T")[0];
+      goal.activityLog[today] = (goal.activityLog[today] || 0) + amount;
+      addXP(data, amount);
+      renderGoals();
+      renderXP();
+      renderHeatmap();
+      saveLocalUsers();
+    }
+  }
+
+  // --- Rendering ---
+  function renderUserSelect(){
+    const select = document.getElementById("user-select");
+    select.innerHTML = "";
+    Object.keys(users).forEach(u => {
+      const opt = document.createElement("option");
+      opt.value = u; opt.textContent = u;
+      if(u === currentUser) opt.selected = true;
+      select.appendChild(opt);
+    });
+  }
+
+  function renderXP(){
+    const data = getUserData(currentUser);
+    const xpInLevel = data.totalXP % XP_PER_LEVEL;
+    const percent = (xpInLevel / XP_PER_LEVEL) * 100;
+    document.getElementById("xp-bar-inner").style.width = percent + "%";
+    document.getElementById("xp-info").innerText = `XP: ${xpInLevel}/${XP_PER_LEVEL} (Level ${data.currentLevel})`;
+    document.getElementById("streak-info").innerText = `🔥 Streak: ${data.streak} Tage`;
+    document.getElementById("rewards").innerHTML = data.rewards.map(r=>`<span class="badge">${r}</span>`).join(" ");
+  }
+
+  function renderGoals(){
+    const data = getUserData(currentUser);
+    const dash = document.getElementById("dashboard");
+    dash.innerHTML = "";
+    data.goals.forEach(goal => {
+      const div = document.createElement("div");
+      div.className = "goal";
+      div.style.backgroundColor = goal.color;
+      div.innerHTML = `
+        <h3>${goal.name} ${goal.emoji}</h3>
+        <p>Progress: ${Math.floor(goal.progress)}/${goal.target}</p>
+        <p>Decay: ${goal.decayRate} pro Tag</p>
+        <button onclick="progressGoal(${goal.id},1)">Minimum</button>
+        <button onclick="progressGoal(${goal.id},2)">Normal</button>
+        <button onclick="progressGoal(${goal.id},5)">Super gut</button>
+        <br>
+        <button onclick="updateGoal('${currentUser}', ${goal.id}, {color: prompt('Farbe (Hex)', '${goal.color}')})">🎨 Farbe</button>
+        <button onclick="updateGoal('${currentUser}', ${goal.id}, {emoji: prompt('Emoji', '${goal.emoji}')})">✨ Emoji</button>
+        <div class="heatmap" id="heatmap-${goal.id}"></div>
+      `;
+      dash.appendChild(div);
+      renderGoalHeatmap(goal);
+    });
+  }
+
+  function renderHeatmap(){
+    const data = getUserData(currentUser);
+    data.goals.forEach(goal => renderGoalHeatmap(goal));
+  }
+
+  function renderGoalHeatmap(goal){
+    const heatmap = document.getElementById(`heatmap-${goal.id}`);
+    if(!heatmap) return;
+    heatmap.innerHTML = "";
+    const today = new Date();
+    for(let i=29;i>=0;i--){
+      const d = new Date(today); d.setDate(d.getDate()-i);
+      const key = d.toISOString().split("T")[0];
+      const count = goal.activityLog[key] || 0;
+      const div = document.createElement("div");
+      div.className = "day";
+      if(count>0) div.dataset.count = Math.min(count,5);
+      heatmap.appendChild(div);
+    }
+  }
+
+  // --- Init ---
+  function init(){
+    loadLocalUsers();
+    renderUserSelect();
+    renderGoals();
+    renderXP();
+    renderHeatmap();
+
+    document.getElementById("user-select").addEventListener("change", e=>{
+      currentUser = e.target.value;
+      renderGoals();
+      renderXP();
+      renderHeatmap();
+    });
+
+    document.getElementById("add-user").addEventListener("click", ()=>{
+      const name = prompt("Neuer User:");
+      if(name) addUser(name);
+    });
+
+    document.getElementById("add-goal").addEventListener("click", ()=>{
+      const name = prompt("Goal Name:");
+      if(name) addGoal(currentUser, name);
+    });
+  }
+
+  init();
+</script>
